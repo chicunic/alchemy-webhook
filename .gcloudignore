@@ -1,0 +1,25 @@
+# Ignore CLI tool files
+cmd/
+main.go
+
+# Git files
+.git/
+.gitignore
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment files
+.env
+.env.local
+
+# Go build artifacts
+*.exe
+*.test
+*.out
+
+# Claude files
+.claude/

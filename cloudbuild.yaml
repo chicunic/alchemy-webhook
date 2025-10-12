@@ -1,0 +1,25 @@
+steps:
+  # Deploy to Cloud Functions (Gen 2)
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'functions'
+      - 'deploy'
+      - 'alchemy-webhook'
+      - '--gen2'
+      - '--runtime=go125'
+      - '--region=${_REGION}'
+      - '--source=.'
+      - '--entry-point=AlchemyWebhook'
+      - '--trigger-http'
+      - '--allow-unauthenticated'
+      - '--set-secrets=ALCHEMY_SIGNING_KEY=projects/${PROJECT_ID}/secrets/alchemy-signing-key:latest'
+
+# Substitution variables
+substitutions:
+  _REGION: 'asia-northeast1'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: '1200s'
