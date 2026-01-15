@@ -11,14 +11,14 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 )
 
-// Block represents blockchain block information
+// Block represents blockchain block information.
 type Block struct {
 	Hash      string `json:"hash"`
 	Number    int64  `json:"number"`
 	Timestamp int64  `json:"timestamp"`
 }
 
-// Transaction represents blockchain transaction information
+// Transaction represents blockchain transaction information.
 type Transaction struct {
 	Hash     string `json:"hash"`
 	From     string `json:"from"`
@@ -30,7 +30,7 @@ type Transaction struct {
 	GasUsed  int64  `json:"gasUsed"`
 }
 
-// Transfer represents ERC20 transfer event information
+// Transfer represents ERC20 transfer event information.
 type Transfer struct {
 	Contract string   `json:"contract"`
 	From     string   `json:"from"`
@@ -39,30 +39,34 @@ type Transfer struct {
 	LogIndex int      `json:"logIndex"`
 }
 
-// MarshalJSON implements custom JSON marshaling for Transfer
+// transferJSON is used for JSON serialization of Transfer.
+type transferJSON struct {
+	Contract string `json:"contract"`
+	From     string `json:"from"`
+	To       string `json:"to"`
+	Value    string `json:"value"`
+	LogIndex int    `json:"logIndex"`
+}
+
 func (t Transfer) MarshalJSON() ([]byte, error) {
-	type Alias Transfer
-	return json.Marshal(&struct {
-		Value string `json:"value"`
-		*Alias
-	}{
-		Value: t.Value.String(),
-		Alias: (*Alias)(&t),
+	return json.Marshal(transferJSON{
+		Contract: t.Contract,
+		From:     t.From,
+		To:       t.To,
+		Value:    t.Value.String(),
+		LogIndex: t.LogIndex,
 	})
 }
 
-// UnmarshalJSON implements custom JSON unmarshaling for Transfer
 func (t *Transfer) UnmarshalJSON(data []byte) error {
-	type Alias Transfer
-	aux := &struct {
-		Value string `json:"value"`
-		*Alias
-	}{
-		Alias: (*Alias)(t),
-	}
+	var aux transferJSON
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return err
 	}
+	t.Contract = aux.Contract
+	t.From = aux.From
+	t.To = aux.To
+	t.LogIndex = aux.LogIndex
 	if aux.Value != "" {
 		t.Value = new(big.Int)
 		t.Value.SetString(aux.Value, 10)
@@ -70,7 +74,7 @@ func (t *Transfer) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// AlchemyMetadata represents Alchemy-specific metadata
+// AlchemyMetadata represents Alchemy-specific metadata.
 type AlchemyMetadata struct {
 	WebhookID      string `json:"webhookId"`
 	EventID        string `json:"eventId"`
@@ -78,7 +82,7 @@ type AlchemyMetadata struct {
 	CreatedAt      string `json:"createdAt"`
 }
 
-// TransferDocument represents the complete document structure
+// TransferDocument represents the complete document structure.
 type TransferDocument struct {
 	Block       Block           `json:"block"`
 	Transaction Transaction     `json:"transaction"`
@@ -87,7 +91,31 @@ type TransferDocument struct {
 	Alchemy     AlchemyMetadata `json:"alchemy"`
 }
 
-// WebhookEvent represents the raw webhook event from Alchemy
+// WebhookLog represents a single log entry in the webhook event.
+type WebhookLog struct {
+	Data    string   `json:"data"`
+	Topics  []string `json:"topics"`
+	Index   int      `json:"index"`
+	Account struct {
+		Address string `json:"address"`
+	} `json:"account"`
+	Transaction struct {
+		Hash string `json:"hash"`
+		From struct {
+			Address string `json:"address"`
+		} `json:"from"`
+		To struct {
+			Address string `json:"address"`
+		} `json:"to"`
+		Value    string `json:"value"`
+		GasPrice string `json:"gasPrice"`
+		Gas      int64  `json:"gas"`
+		Status   int    `json:"status"`
+		GasUsed  int64  `json:"gasUsed"`
+	} `json:"transaction"`
+}
+
+// WebhookEvent represents the raw webhook event from Alchemy.
 type WebhookEvent struct {
 	WebhookID string    `json:"webhookId"`
 	ID        string    `json:"id"`
@@ -96,31 +124,10 @@ type WebhookEvent struct {
 	Event     struct {
 		Data struct {
 			Block struct {
-				Hash      string `json:"hash"`
-				Number    int64  `json:"number"`
-				Timestamp int64  `json:"timestamp"`
-				Logs      []struct {
-					Data    string   `json:"data"`
-					Topics  []string `json:"topics"`
-					Index   int      `json:"index"`
-					Account struct {
-						Address string `json:"address"`
-					} `json:"account"`
-					Transaction struct {
-						Hash string `json:"hash"`
-						From struct {
-							Address string `json:"address"`
-						} `json:"from"`
-						To struct {
-							Address string `json:"address"`
-						} `json:"to"`
-						Value    string `json:"value"`
-						GasPrice string `json:"gasPrice"`
-						Gas      int64  `json:"gas"`
-						Status   int    `json:"status"`
-						GasUsed  int64  `json:"gasUsed"`
-					} `json:"transaction"`
-				} `json:"logs"`
+				Hash      string       `json:"hash"`
+				Number    int64        `json:"number"`
+				Timestamp int64        `json:"timestamp"`
+				Logs      []WebhookLog `json:"logs"`
 			} `json:"block"`
 		} `json:"data"`
 		SequenceNumber string `json:"sequenceNumber"`
@@ -128,33 +135,33 @@ type WebhookEvent struct {
 	} `json:"event"`
 }
 
-// transferEventABI is the ABI definition for ERC20 Transfer event
-const transferEventABI = `[{
-	"anonymous": false,
-	"inputs": [
-		{"indexed": true, "name": "from", "type": "address"},
-		{"indexed": true, "name": "to", "type": "address"},
-		{"indexed": false, "name": "value", "type": "uint256"}
-	],
-	"name": "Transfer",
-	"type": "event"
-}]`
+// ERC20 Transfer event ABI definition.
+const transferEventABI = `[{"anonymous":false,"inputs":[{"indexed":true,"name":"from","type":"address"},{"indexed":true,"name":"to","type":"address"},{"indexed":false,"name":"value","type":"uint256"}],"name":"Transfer","type":"event"}]`
 
-// transferEventDecoded represents the decoded Transfer event
-type transferEventDecoded struct {
+var parsedTransferABI abi.ABI
+
+func init() {
+	var err error
+	parsedTransferABI, err = abi.JSON(strings.NewReader(transferEventABI))
+	if err != nil {
+		panic("failed to parse transfer event ABI: " + err.Error())
+	}
+}
+
+// decodedTransferEvent holds the decoded value from Transfer event data.
+type decodedTransferEvent struct {
 	Value *big.Int
 }
 
-// ParseTransferEvents parses all webhook logs into TransferDocuments
+// ParseTransferEvents parses all webhook logs into TransferDocuments.
 func ParseTransferEvents(webhook *WebhookEvent) ([]*TransferDocument, error) {
 	logs := webhook.Event.Data.Block.Logs
 	documents := make([]*TransferDocument, 0, len(logs))
 
 	for i := range logs {
-		doc, err := ParseTransferEvent(webhook, i)
+		doc, err := parseLogEntry(webhook, i)
 		if err != nil {
-			// Skip logs that fail to parse (might not be Transfer events)
-			continue
+			continue // Skip non-Transfer events
 		}
 		documents = append(documents, doc)
 	}
@@ -162,51 +169,35 @@ func ParseTransferEvents(webhook *WebhookEvent) ([]*TransferDocument, error) {
 	return documents, nil
 }
 
-// ParseTransferEvent parses a webhook log entry into a TransferDocument using go-ethereum ABI decoder
-func ParseTransferEvent(webhook *WebhookEvent, logIndex int) (*TransferDocument, error) {
-	if logIndex >= len(webhook.Event.Data.Block.Logs) {
+// parseLogEntry parses a single log entry into a TransferDocument.
+func parseLogEntry(webhook *WebhookEvent, index int) (*TransferDocument, error) {
+	logs := webhook.Event.Data.Block.Logs
+	if index >= len(logs) {
 		return nil, fmt.Errorf("log index out of range")
 	}
 
-	log := webhook.Event.Data.Block.Logs[logIndex]
-
-	// Validate topics
+	log := logs[index]
 	if len(log.Topics) < 3 {
 		return nil, fmt.Errorf("invalid topics length")
 	}
 
-	// Parse Transfer event ABI
-	transferABI, err := abi.JSON(strings.NewReader(transferEventABI))
-	if err != nil {
+	var decoded decodedTransferEvent
+	if err := parsedTransferABI.UnpackIntoInterface(&decoded, "Transfer", common.FromHex(log.Data)); err != nil {
 		return nil, err
 	}
 
-	// Convert data to bytes
-	dataBytes := common.FromHex(log.Data)
-
-	// Unpack the event (only non-indexed parameters, i.e., value)
-	decoded := new(transferEventDecoded)
-	err = transferABI.UnpackIntoInterface(decoded, "Transfer", dataBytes)
-	if err != nil {
-		return nil, err
-	}
-
-	// Extract indexed parameters from topics
-	// topics[0] is event signature, topics[1] is from, topics[2] is to
-	fromAddr := common.HexToAddress(log.Topics[1])
-	toAddr := common.HexToAddress(log.Topics[2])
-
-	doc := &TransferDocument{
+	block := webhook.Event.Data.Block
+	return &TransferDocument{
 		Block: Block{
-			Hash:      webhook.Event.Data.Block.Hash,
-			Number:    webhook.Event.Data.Block.Number,
-			Timestamp: webhook.Event.Data.Block.Timestamp,
+			Hash:      block.Hash,
+			Number:    block.Number,
+			Timestamp: block.Timestamp,
 		},
 		Transaction: Transaction{
 			Hash:     log.Transaction.Hash,
 			From:     log.Transaction.From.Address,
 			To:       log.Transaction.To.Address,
-			Value:    convertHexToDecimal(log.Transaction.Value),
+			Value:    hexToDecimal(log.Transaction.Value),
 			GasPrice: log.Transaction.GasPrice,
 			Gas:      log.Transaction.Gas,
 			Status:   log.Transaction.Status,
@@ -214,8 +205,8 @@ func ParseTransferEvent(webhook *WebhookEvent, logIndex int) (*TransferDocument,
 		},
 		Transfer: Transfer{
 			Contract: log.Account.Address,
-			From:     fromAddr.Hex(),
-			To:       toAddr.Hex(),
+			From:     common.HexToAddress(log.Topics[1]).Hex(),
+			To:       common.HexToAddress(log.Topics[2]).Hex(),
 			Value:    decoded.Value,
 			LogIndex: log.Index,
 		},
@@ -226,24 +217,21 @@ func ParseTransferEvent(webhook *WebhookEvent, logIndex int) (*TransferDocument,
 			SequenceNumber: webhook.Event.SequenceNumber,
 			CreatedAt:      webhook.CreatedAt.Format(time.RFC3339),
 		},
-	}
-
-	return doc, nil
+	}, nil
 }
 
-// convertHexToDecimal converts hex string to decimal string
-func convertHexToDecimal(hexStr string) string {
-	hexStr = strings.TrimPrefix(hexStr, "0x")
-	if hexStr == "" {
+// hexToDecimal converts a hex string to its decimal representation.
+func hexToDecimal(hex string) string {
+	hex = strings.TrimPrefix(hex, "0x")
+	if hex == "" {
 		return "0"
 	}
-
 	value := new(big.Int)
-	value.SetString(hexStr, 16)
+	value.SetString(hex, 16)
 	return value.String()
 }
 
-// GetDocumentID generates document ID from transaction hash and log index
+// GetDocumentID generates a document ID from transaction hash and log index.
 func GetDocumentID(txHash string, logIndex int) string {
 	return fmt.Sprintf("%s-%d", txHash, logIndex)
 }

@@ -3,6 +3,7 @@ package function
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -10,28 +11,22 @@ import (
 	"cloud.google.com/go/pubsub/v2"
 )
 
-// PubSubPublisher handles publishing webhook events to Google Cloud Pub/Sub
+// PubSubPublisher handles publishing webhook events to Google Cloud Pub/Sub.
 type PubSubPublisher struct {
 	client    *pubsub.Client
 	publisher *pubsub.Publisher
-	topicID   string
 }
 
-// NewPubSubPublisher creates a new Pub/Sub publisher
+// NewPubSubPublisher creates a new Pub/Sub publisher.
 func NewPubSubPublisher(ctx context.Context) (*PubSubPublisher, error) {
-	// Get project ID from environment variables
-	// Cloud Functions automatically provides GOOGLE_CLOUD_PROJECT
-	projectID := os.Getenv("GCP_PROJECT")
+	projectID := getProjectID()
 	if projectID == "" {
-		projectID = os.Getenv("GOOGLE_CLOUD_PROJECT")
-	}
-	if projectID == "" {
-		return nil, fmt.Errorf("project ID not found in environment variables (GCP_PROJECT or GOOGLE_CLOUD_PROJECT)")
+		return nil, errors.New("project ID not found (GCP_PROJECT or GOOGLE_CLOUD_PROJECT)")
 	}
 
 	topicID := os.Getenv("ALCHEMY_PUBSUB_TOPIC")
 	if topicID == "" {
-		return nil, fmt.Errorf("ALCHEMY_PUBSUB_TOPIC environment variable is not set")
+		return nil, errors.New("ALCHEMY_PUBSUB_TOPIC environment variable is not set")
 	}
 
 	client, err := pubsub.NewClient(ctx, projectID)
@@ -39,37 +34,29 @@ func NewPubSubPublisher(ctx context.Context) (*PubSubPublisher, error) {
 		return nil, err
 	}
 
-	publisher := client.Publisher(topicID)
-
 	return &PubSubPublisher{
 		client:    client,
-		publisher: publisher,
-		topicID:   topicID,
+		publisher: client.Publisher(topicID),
 	}, nil
 }
 
-// PublishTransfers publishes an array of TransferDocuments to Pub/Sub as a single message
-func (p *PubSubPublisher) PublishTransfers(ctx context.Context, transfers []*TransferDocument) error {
-	data, _ := json.Marshal(transfers)
+func getProjectID() string {
+	if id := os.Getenv("GCP_PROJECT"); id != "" {
+		return id
+	}
+	return os.Getenv("GOOGLE_CLOUD_PROJECT")
+}
 
-	// Use first transfer's metadata for message attributes
-	var attributes map[string]string
-	if len(transfers) > 0 {
-		attributes = map[string]string{
-			"webhook_id": transfers[0].Alchemy.WebhookID,
-			"event_id":   transfers[0].Alchemy.EventID,
-			"network":    transfers[0].Network,
-			"count":      fmt.Sprintf("%d", len(transfers)),
-		}
-	} else {
-		attributes = map[string]string{
-			"count": "0",
-		}
+// PublishTransfers publishes an array of TransferDocuments to Pub/Sub as a single message.
+func (p *PubSubPublisher) PublishTransfers(ctx context.Context, transfers []*TransferDocument) error {
+	data, err := json.Marshal(transfers)
+	if err != nil {
+		return fmt.Errorf("failed to marshal transfers: %w", err)
 	}
 
 	result := p.publisher.Publish(ctx, &pubsub.Message{
 		Data:       data,
-		Attributes: attributes,
+		Attributes: buildAttributes(transfers),
 	})
 
 	messageID, err := result.Get(ctx)
@@ -81,9 +68,21 @@ func (p *PubSubPublisher) PublishTransfers(ctx context.Context, transfers []*Tra
 	return nil
 }
 
-// Close closes the Pub/Sub client
+func buildAttributes(transfers []*TransferDocument) map[string]string {
+	if len(transfers) == 0 {
+		return map[string]string{"count": "0"}
+	}
+	first := transfers[0]
+	return map[string]string{
+		"webhook_id": first.Alchemy.WebhookID,
+		"event_id":   first.Alchemy.EventID,
+		"network":    first.Network,
+		"count":      fmt.Sprintf("%d", len(transfers)),
+	}
+}
+
+// Close closes the Pub/Sub client.
 func (p *PubSubPublisher) Close() error {
-	// Stop the publisher to flush any pending messages
 	p.publisher.Stop()
 	return p.client.Close()
 }

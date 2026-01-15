@@ -1,6 +1,7 @@
 package function
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -13,76 +14,71 @@ import (
 	"github.com/GoogleCloudPlatform/functions-framework-go/functions"
 )
 
-func jsonToWebhookEvent(body []byte) (*WebhookEvent, error) {
-	event := new(WebhookEvent)
-	if err := json.Unmarshal(body, &event); err != nil {
-		return nil, err
-	}
-	return event, nil
-}
-
-func isValidSignatureForStringBody(
-	body []byte,
-	signature string,
-	signingKey []byte,
-) bool {
-	h := hmac.New(sha256.New, signingKey)
-	h.Write(body)
-	digest := hex.EncodeToString(h.Sum(nil))
-	return digest == signature
-}
-
-// AlchemyWebhook is the Cloud Run Function entrypoint for Alchemy webhooks
-func AlchemyWebhook(w http.ResponseWriter, r *http.Request) {
-	// Get signing key from environment
-	signingKey := os.Getenv("ALCHEMY_SIGNING_KEY")
-	if signingKey == "" {
-		log.Printf(`{"level":"error","message":"ALCHEMY_SIGNING_KEY environment variable is not set"}`)
-		http.Error(w, "Server configuration error", http.StatusInternalServerError)
-		return
-	}
-
-	signature := r.Header.Get("x-alchemy-signature")
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		log.Printf(`{"level":"error","message":"failed to read request body","error":"%s"}`, err.Error())
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	r.Body.Close()
-
-	// Log raw JSON for debugging in structured format
-	log.Printf(`{"level":"debug","message":"raw webhook received","signature":"%s","body":%s}`, signature, string(body))
-
-	isValidSignature := isValidSignatureForStringBody(body, signature, []byte(signingKey))
-	if !isValidSignature {
-		log.Printf(`{"level":"error","message":"signature validation failed","signature":"%s"}`, signature)
-		http.Error(w, "Unauthorized", http.StatusForbidden)
-		return
-	}
-
-	webhook, err := jsonToWebhookEvent(body)
-	if err != nil {
-		log.Printf(`{"level":"error","message":"failed to parse webhook event","error":"%s"}`, err.Error())
-		http.Error(w, "Invalid webhook event format", http.StatusBadRequest)
-		return
-	}
-
-	handleAlchemyWebhook(w, r, webhook)
-}
-
 func init() {
 	functions.HTTP("AlchemyWebhook", AlchemyWebhook)
 }
 
-// handleAlchemyWebhook processes the webhook event
-func handleAlchemyWebhook(w http.ResponseWriter, r *http.Request, webhook *WebhookEvent) {
-	ctx := r.Context()
+// AlchemyWebhook is the Cloud Run Function entrypoint for Alchemy webhooks
+func AlchemyWebhook(w http.ResponseWriter, r *http.Request) {
+	signingKey := os.Getenv("ALCHEMY_SIGNING_KEY")
+	if signingKey == "" {
+		logError("ALCHEMY_SIGNING_KEY environment variable is not set", nil)
+		http.Error(w, "Server configuration error", http.StatusInternalServerError)
+		return
+	}
 
-	// Parse transfer events from webhook
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		logError("failed to read request body", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	signature := r.Header.Get("x-alchemy-signature")
+	log.Printf(`{"level":"debug","message":"raw webhook received","signature":"%s","body":%s}`, signature, string(body))
+
+	if !verifySignature(body, signature, []byte(signingKey)) {
+		logError("signature validation failed", nil)
+		http.Error(w, "Unauthorized", http.StatusForbidden)
+		return
+	}
+
+	webhook, err := parseWebhookEvent(body)
+	if err != nil {
+		logError("failed to parse webhook event", err)
+		http.Error(w, "Invalid webhook event format", http.StatusBadRequest)
+		return
+	}
+
+	handleWebhook(w, r.Context(), webhook)
+}
+
+func verifySignature(body []byte, signature string, signingKey []byte) bool {
+	h := hmac.New(sha256.New, signingKey)
+	h.Write(body)
+	return hex.EncodeToString(h.Sum(nil)) == signature
+}
+
+func parseWebhookEvent(body []byte) (*WebhookEvent, error) {
+	var event WebhookEvent
+	if err := json.Unmarshal(body, &event); err != nil {
+		return nil, err
+	}
+	return &event, nil
+}
+
+func logError(message string, err error) {
+	if err != nil {
+		log.Printf(`{"level":"error","message":"%s","error":"%s"}`, message, err.Error())
+	} else {
+		log.Printf(`{"level":"error","message":"%s"}`, message)
+	}
+}
+
+func handleWebhook(w http.ResponseWriter, ctx context.Context, webhook *WebhookEvent) {
 	transfers, err := ParseTransferEvents(webhook)
 	if err != nil {
-		log.Printf(`{"level":"error","message":"failed to parse transfer events","error":"%s"}`, err.Error())
+		logError("failed to parse transfer events", err)
 		http.Error(w, "Failed to parse transfer events", http.StatusBadRequest)
 		return
 	}
@@ -93,42 +89,46 @@ func handleAlchemyWebhook(w http.ResponseWriter, r *http.Request, webhook *Webho
 		return
 	}
 
-	// Log parsed transfers with full details
 	transfersJSON, _ := json.Marshal(transfers)
-	log.Printf(`{"level":"info","message":"parsed transfer events","webhook_id":"%s","count":%d,"transfers":%s}`, webhook.WebhookID, len(transfers), string(transfersJSON))
+	log.Printf(`{"level":"info","message":"parsed transfer events","webhook_id":"%s","count":%d,"transfers":%s}`,
+		webhook.WebhookID, len(transfers), string(transfersJSON))
 
-	// Publish to Pub/Sub (blocking, ensures message delivery)
 	if os.Getenv("ENABLE_PUBSUB") == "true" {
-		publisher, err := NewPubSubPublisher(ctx)
-		if err != nil {
-			log.Printf(`{"level":"error","message":"failed to create pubsub publisher","error":"%s"}`, err.Error())
-			http.Error(w, "Failed to initialize Pub/Sub", http.StatusInternalServerError)
-			return
-		}
-		defer publisher.Close()
-
-		if err := publisher.PublishTransfers(ctx, transfers); err != nil {
-			log.Printf(`{"level":"error","message":"failed to publish transfers","error":"%s"}`, err.Error())
+		if err := publishToPubSub(ctx, transfers); err != nil {
+			logError("failed to publish to Pub/Sub", err)
 			http.Error(w, "Failed to publish to Pub/Sub", http.StatusInternalServerError)
 			return
 		}
 	}
 
-	// Write to Firestore (blocking, ensures data persistence)
 	if os.Getenv("ENABLE_FIRESTORE") == "true" {
-		writer, err := NewFirestoreWriter(ctx)
-		if err != nil {
-			log.Printf(`{"level":"error","message":"failed to create firestore writer","error":"%s"}`, err.Error())
-			http.Error(w, "Failed to initialize Firestore", http.StatusInternalServerError)
-			return
-		}
-
-		if err := writer.WriteBatchTransfers(ctx, transfers); err != nil {
-			log.Printf(`{"level":"error","message":"failed to write batch to firestore","error":"%s"}`, err.Error())
+		if err := writeToFirestore(ctx, transfers); err != nil {
+			logError("failed to write to Firestore", err)
 			http.Error(w, "Failed to write to Firestore", http.StatusInternalServerError)
 			return
 		}
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+func publishToPubSub(ctx context.Context, transfers []*TransferDocument) error {
+	publisher, err := NewPubSubPublisher(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := publisher.Close(); err != nil {
+			log.Printf(`{"level":"error","message":"failed to close pubsub publisher","error":"%s"}`, err.Error())
+		}
+	}()
+	return publisher.PublishTransfers(ctx, transfers)
+}
+
+func writeToFirestore(ctx context.Context, transfers []*TransferDocument) error {
+	writer, err := NewFirestoreWriter(ctx)
+	if err != nil {
+		return err
+	}
+	return writer.WriteBatchTransfers(ctx, transfers)
 }

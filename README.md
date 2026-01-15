@@ -2,6 +2,8 @@
 
 Alchemy webhook tool for receiving and processing ERC20 Token Transfer events.
 
+For more information about Alchemy Notify API, see the [official documentation](https://www.alchemy.com/docs/reference/notify-api-quickstart).
+
 ## Features
 
 1. **Webhook Signature Verification** - Secure HMAC-SHA256 signature validation
@@ -181,7 +183,7 @@ Stored in `alchemy_stream` collection with document ID format: `{txHash}-{logInd
 
 ## Project Structure
 
-```
+```text
 alchemy-webhook/
 ├── function.go       # Cloud Function entry point with signature verification
 ├── parser.go         # ERC20 Transfer event parser using go-ethereum ABI decoder

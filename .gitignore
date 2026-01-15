@@ -30,3 +30,13 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# LLM tools
+.claude/
+.cursor/
+.aider*
+.continue/
+.copilot/
+.codeium/
+.supermaven/
+.tabnine/

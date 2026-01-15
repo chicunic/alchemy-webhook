@@ -2,6 +2,8 @@
 
 Alchemy webhook 工具，用于接收和处理 ERC20 Token Transfer 事件。
 
+关于 Alchemy Notify API 的更多信息，请参阅[官方文档](https://www.alchemy.com/docs/reference/notify-api-quickstart)。
+
 ## 功能特性
 
 1. **Webhook 签名验证** - 使用 HMAC-SHA256 安全签名验证
@@ -181,7 +183,7 @@ ENABLE_FIRESTORE=true
 
 ## 项目结构
 
-```
+```text
 alchemy-webhook/
 ├── function.go       # Cloud Function 入口，包含签名验证
 ├── parser.go         # ERC20 Transfer 事件解析，使用 go-ethereum ABI 解码器
