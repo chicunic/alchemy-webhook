@@ -102,6 +102,16 @@ Received event format:
 
 ## Quick Start
 
+### Development
+
+```bash
+make build    # Compile
+make test     # Run tests
+make vet      # Static analysis
+make lint     # Run golangci-lint
+make tidy     # go mod tidy
+```
+
 ### Deploy Cloud Function
 
 Deploy using Cloud Build:
@@ -120,6 +130,8 @@ ALCHEMY_SIGNING_KEY=your_signing_key_here
 ENABLE_PUBSUB=true
 ALCHEMY_PUBSUB_TOPIC=your-topic-id
 ENABLE_FIRESTORE=true
+FIRESTORE_COLLECTION=alchemy_stream    # Default: alchemy_stream
+FIRESTORE_BATCH_LIMIT=500              # Default: 500
 ```
 
 ## Data Processing
@@ -185,13 +197,17 @@ Stored in `alchemy_stream` collection with document ID format: `{txHash}-{logInd
 
 ```text
 alchemy-webhook/
-├── function.go       # Cloud Function entry point with signature verification
-├── parser.go         # ERC20 Transfer event parser using go-ethereum ABI decoder
-├── pubsub.go         # Pub/Sub publisher with batch publishing
-├── firestore.go      # Firestore storage with transactional writes
-├── cloudbuild.yaml   # Cloud Build configuration
-├── go.mod            # Go module dependencies
-└── .env.example      # Environment variable template
+├── function.go         # Cloud Function entry point with signature verification
+├── function_test.go    # Entry point tests
+├── parser.go           # ERC20 Transfer event parser using go-ethereum ABI decoder
+├── parser_test.go      # Parser tests
+├── pubsub.go           # Pub/Sub publisher with batch publishing
+├── firestore.go        # Firestore storage with transactional writes
+├── cloudbuild.yaml     # Cloud Build configuration with CI steps
+├── Makefile            # Build, test, lint, deploy commands
+├── .golangci.yaml      # Linter configuration
+├── go.mod              # Go module dependencies
+└── .env.example        # Environment variable template
 ```
 
 ## Implementation Details

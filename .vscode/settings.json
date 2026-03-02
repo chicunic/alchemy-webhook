@@ -1,0 +1,15 @@
+{
+  "yaml.schemas": {
+    "https://golangci-lint.run/jsonschema/golangci.jsonschema.json": ".golangci.yaml",
+    "https://json.schemastore.org/cloudbuild.json": "cloudbuild.yaml"
+  },
+  "[go]": {
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "golang.go"
+  },
+  "go.lintTool": "golangci-lint",
+  "go.lintFlags": ["--fast"],
+  "gopls": {
+    "formatting.gofumpt": true
+  }
+}

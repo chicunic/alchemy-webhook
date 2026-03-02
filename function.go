@@ -7,7 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 
@@ -15,6 +15,7 @@ import (
 )
 
 func init() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
 	functions.HTTP("AlchemyWebhook", AlchemyWebhook)
 }
 
@@ -22,30 +23,30 @@ func init() {
 func AlchemyWebhook(w http.ResponseWriter, r *http.Request) {
 	signingKey := os.Getenv("ALCHEMY_SIGNING_KEY")
 	if signingKey == "" {
-		logError("ALCHEMY_SIGNING_KEY environment variable is not set", nil)
+		slog.Error("ALCHEMY_SIGNING_KEY environment variable is not set")
 		http.Error(w, "Server configuration error", http.StatusInternalServerError)
 		return
 	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		logError("failed to read request body", err)
+		slog.Error("failed to read request body", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	signature := r.Header.Get("x-alchemy-signature")
-	log.Printf(`{"level":"debug","message":"raw webhook received","signature":"%s","body":%s}`, signature, string(body))
+	slog.Debug("raw webhook received", "signature", signature, "body", string(body))
 
 	if !verifySignature(body, signature, []byte(signingKey)) {
-		logError("signature validation failed", nil)
+		slog.Error("signature validation failed")
 		http.Error(w, "Unauthorized", http.StatusForbidden)
 		return
 	}
 
 	webhook, err := parseWebhookEvent(body)
 	if err != nil {
-		logError("failed to parse webhook event", err)
+		slog.Error("failed to parse webhook event", "error", err)
 		http.Error(w, "Invalid webhook event format", http.StatusBadRequest)
 		return
 	}
@@ -67,35 +68,31 @@ func parseWebhookEvent(body []byte) (*WebhookEvent, error) {
 	return &event, nil
 }
 
-func logError(message string, err error) {
-	if err != nil {
-		log.Printf(`{"level":"error","message":"%s","error":"%s"}`, message, err.Error())
-	} else {
-		log.Printf(`{"level":"error","message":"%s"}`, message)
-	}
-}
-
 func handleWebhook(w http.ResponseWriter, ctx context.Context, webhook *WebhookEvent) {
 	transfers, err := ParseTransferEvents(webhook)
 	if err != nil {
-		logError("failed to parse transfer events", err)
+		slog.Error("failed to parse transfer events", "error", err)
 		http.Error(w, "Failed to parse transfer events", http.StatusBadRequest)
 		return
 	}
 
 	if len(transfers) == 0 {
-		log.Printf(`{"level":"warn","message":"no transfer events found in webhook","webhook_id":"%s"}`, webhook.WebhookID)
+		slog.Warn("no transfer events found in webhook", "webhook_id", webhook.WebhookID)
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 
-	transfersJSON, _ := json.Marshal(transfers)
-	log.Printf(`{"level":"info","message":"parsed transfer events","webhook_id":"%s","count":%d,"transfers":%s}`,
-		webhook.WebhookID, len(transfers), string(transfersJSON))
+	transfersJSON, err := json.Marshal(transfers)
+	if err != nil {
+		slog.Error("failed to marshal transfer events", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	slog.Info("parsed transfer events", "webhook_id", webhook.WebhookID, "count", len(transfers), "transfers", string(transfersJSON))
 
 	if os.Getenv("ENABLE_PUBSUB") == "true" {
 		if err := publishToPubSub(ctx, transfers); err != nil {
-			logError("failed to publish to Pub/Sub", err)
+			slog.Error("failed to publish to Pub/Sub", "error", err)
 			http.Error(w, "Failed to publish to Pub/Sub", http.StatusInternalServerError)
 			return
 		}
@@ -103,7 +100,7 @@ func handleWebhook(w http.ResponseWriter, ctx context.Context, webhook *WebhookE
 
 	if os.Getenv("ENABLE_FIRESTORE") == "true" {
 		if err := writeToFirestore(ctx, transfers); err != nil {
-			logError("failed to write to Firestore", err)
+			slog.Error("failed to write to Firestore", "error", err)
 			http.Error(w, "Failed to write to Firestore", http.StatusInternalServerError)
 			return
 		}
@@ -119,7 +116,7 @@ func publishToPubSub(ctx context.Context, transfers []*TransferDocument) error {
 	}
 	defer func() {
 		if err := publisher.Close(); err != nil {
-			log.Printf(`{"level":"error","message":"failed to close pubsub publisher","error":"%s"}`, err.Error())
+			slog.Error("failed to close pubsub publisher", "error", err)
 		}
 	}()
 	return publisher.PublishTransfers(ctx, transfers)

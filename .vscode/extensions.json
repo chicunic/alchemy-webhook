@@ -1,0 +1,8 @@
+{
+  "recommendations": [
+    "golang.go",
+    "humao.rest-client",
+    "mhutchie.git-graph",
+    "redhat.vscode-yaml"
+  ]
+}

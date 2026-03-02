@@ -2,16 +2,34 @@ package function
 
 import (
 	"context"
-	"log"
+	"log/slog"
+	"os"
+	"strconv"
 
 	"cloud.google.com/go/firestore"
-	firebase "firebase.google.com/go"
+	firebase "firebase.google.com/go/v4"
 )
 
-const (
-	collectionName = "alchemy_stream"
-	batchLimit     = 500
+var (
+	firestoreCollection = getEnvOrDefault("FIRESTORE_COLLECTION", "alchemy_stream")
+	firestoreBatchLimit = getEnvOrDefaultInt("FIRESTORE_BATCH_LIMIT", 500)
 )
+
+func getEnvOrDefault(key, defaultValue string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return defaultValue
+}
+
+func getEnvOrDefaultInt(key string, defaultValue int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return defaultValue
+}
 
 // FirestoreWriter handles writing webhook events to Google Cloud Firestore.
 type FirestoreWriter struct {
@@ -36,19 +54,19 @@ func (f *FirestoreWriter) WriteBatchTransfers(ctx context.Context, transfers []*
 	}
 	defer func() {
 		if err := client.Close(); err != nil {
-			log.Printf(`{"level":"error","message":"failed to close firestore client","error":"%s"}`, err.Error())
+			slog.Error("failed to close firestore client", "error", err)
 		}
 	}()
 
 	total := len(transfers)
-	for start := 0; start < total; start += batchLimit {
-		end := min(start+batchLimit, total)
+	for start := 0; start < total; start += firestoreBatchLimit {
+		end := min(start+firestoreBatchLimit, total)
 		batch := transfers[start:end]
 
 		err = client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 			for _, transfer := range batch {
 				docID := GetDocumentID(transfer.Transaction.Hash, transfer.Transfer.LogIndex)
-				docRef := client.Collection(collectionName).Doc(docID)
+				docRef := client.Collection(firestoreCollection).Doc(docID)
 				if err := tx.Set(docRef, transfer); err != nil {
 					return err
 				}
@@ -59,11 +77,9 @@ func (f *FirestoreWriter) WriteBatchTransfers(ctx context.Context, transfers []*
 			return err
 		}
 
-		log.Printf(`{"level":"info","message":"batch written to firestore","collection":"%s","range":"%d-%d","size":%d}`,
-			collectionName, start, end, len(batch))
+		slog.Info("batch written to firestore", "collection", firestoreCollection, "start", start, "end", end, "size", len(batch))
 	}
 
-	log.Printf(`{"level":"info","message":"all batches written to firestore","collection":"%s","total":%d}`,
-		collectionName, total)
+	slog.Info("all batches written to firestore", "collection", firestoreCollection, "total", total)
 	return nil
 }

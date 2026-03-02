@@ -5,8 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
+	"strconv"
 
 	"cloud.google.com/go/pubsub/v2"
 )
@@ -64,7 +65,7 @@ func (p *PubSubPublisher) PublishTransfers(ctx context.Context, transfers []*Tra
 		return err
 	}
 
-	log.Printf(`{"level":"info","message":"published transfers to pubsub","message_id":"%s","count":%d}`, messageID, len(transfers))
+	slog.Info("published transfers to pubsub", "message_id", messageID, "count", len(transfers))
 	return nil
 }
 
@@ -77,7 +78,7 @@ func buildAttributes(transfers []*TransferDocument) map[string]string {
 		"webhook_id": first.Alchemy.WebhookID,
 		"event_id":   first.Alchemy.EventID,
 		"network":    first.Network,
-		"count":      fmt.Sprintf("%d", len(transfers)),
+		"count":      strconv.Itoa(len(transfers)),
 	}
 }
 
