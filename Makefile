@@ -18,7 +18,7 @@ tidy:
 deploy:
 	gcloud functions deploy alchemy-webhook \
 		--gen2 \
-		--runtime=go125 \
+		--runtime=go126 \
 		--region=asia-northeast1 \
 		--source=. \
 		--entry-point=AlchemyWebhook \

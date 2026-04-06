@@ -6,8 +6,5 @@ linters:
     - govet
     - staticcheck
     - unused
-    - gosimple
-    - gofmt
-    - goimports
     - misspell
     - unconvert
