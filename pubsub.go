@@ -8,9 +8,26 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
+	"sync"
 
 	"cloud.google.com/go/pubsub/v2"
 )
+
+var (
+	pubsubOnce      sync.Once
+	pubsubPublisher *PubSubPublisher
+	pubsubErr       error
+)
+
+// getPubSubPublisher lazily initializes and caches a shared PubSubPublisher.
+// The underlying client is reused across invocations to avoid per-request
+// connection setup overhead.
+func getPubSubPublisher(ctx context.Context) (*PubSubPublisher, error) {
+	pubsubOnce.Do(func() {
+		pubsubPublisher, pubsubErr = NewPubSubPublisher(ctx)
+	})
+	return pubsubPublisher, pubsubErr
+}
 
 // PubSubPublisher handles publishing webhook events to Google Cloud Pub/Sub.
 type PubSubPublisher struct {
@@ -80,10 +97,4 @@ func buildAttributes(transfers []*TransferDocument) map[string]string {
 		"network":    first.Network,
 		"count":      strconv.Itoa(len(transfers)),
 	}
-}
-
-// Close closes the Pub/Sub client.
-func (p *PubSubPublisher) Close() error {
-	p.publisher.Stop()
-	return p.client.Close()
 }

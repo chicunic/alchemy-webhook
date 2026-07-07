@@ -3,6 +3,7 @@ package function
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"strings"
 	"time"
@@ -68,8 +69,11 @@ func (t *Transfer) UnmarshalJSON(data []byte) error {
 	t.To = aux.To
 	t.LogIndex = aux.LogIndex
 	if aux.Value != "" {
-		t.Value = new(big.Int)
-		t.Value.SetString(aux.Value, 10)
+		value, ok := new(big.Int).SetString(aux.Value, 10)
+		if !ok {
+			return fmt.Errorf("invalid transfer value: %q", aux.Value)
+		}
+		t.Value = value
 	}
 	return nil
 }
@@ -159,7 +163,7 @@ func ParseTransferEvents(webhook *WebhookEvent) ([]*TransferDocument, error) {
 	documents := make([]*TransferDocument, 0, len(logs))
 
 	for i := range logs {
-		doc, err := parseLogEntry(webhook, i)
+		doc, err := parseLogEntry(webhook, &logs[i])
 		if err != nil {
 			continue // Skip non-Transfer events
 		}
@@ -170,13 +174,7 @@ func ParseTransferEvents(webhook *WebhookEvent) ([]*TransferDocument, error) {
 }
 
 // parseLogEntry parses a single log entry into a TransferDocument.
-func parseLogEntry(webhook *WebhookEvent, index int) (*TransferDocument, error) {
-	logs := webhook.Event.Data.Block.Logs
-	if index >= len(logs) {
-		return nil, fmt.Errorf("log index out of range")
-	}
-
-	log := logs[index]
+func parseLogEntry(webhook *WebhookEvent, log *WebhookLog) (*TransferDocument, error) {
 	if len(log.Topics) < 3 {
 		return nil, fmt.Errorf("invalid topics length")
 	}
@@ -221,13 +219,17 @@ func parseLogEntry(webhook *WebhookEvent, index int) (*TransferDocument, error) 
 }
 
 // hexToDecimal converts a hex string to its decimal representation.
+// Returns "0" if the input is empty or cannot be parsed as hex.
 func hexToDecimal(hex string) string {
 	hex = strings.TrimPrefix(hex, "0x")
 	if hex == "" {
 		return "0"
 	}
-	value := new(big.Int)
-	value.SetString(hex, 16)
+	value, ok := new(big.Int).SetString(hex, 16)
+	if !ok {
+		slog.Warn("failed to parse hex value", "hex", hex)
+		return "0"
+	}
 	return value.String()
 }
 

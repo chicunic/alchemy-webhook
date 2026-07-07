@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
+	"sync"
 
 	"cloud.google.com/go/firestore"
 	firebase "firebase.google.com/go/v4"
@@ -31,9 +32,25 @@ func getEnvOrDefaultInt(key string, defaultValue int) int {
 	return defaultValue
 }
 
+var (
+	firestoreOnce   sync.Once
+	firestoreWriter *FirestoreWriter
+	firestoreErr    error
+)
+
+// getFirestoreWriter lazily initializes and caches a shared FirestoreWriter.
+// The underlying client is reused across invocations to avoid per-request
+// connection setup overhead.
+func getFirestoreWriter(ctx context.Context) (*FirestoreWriter, error) {
+	firestoreOnce.Do(func() {
+		firestoreWriter, firestoreErr = NewFirestoreWriter(ctx)
+	})
+	return firestoreWriter, firestoreErr
+}
+
 // FirestoreWriter handles writing webhook events to Google Cloud Firestore.
 type FirestoreWriter struct {
-	app *firebase.App
+	client *firestore.Client
 }
 
 // NewFirestoreWriter creates a new Firestore writer using Firebase Admin SDK.
@@ -42,28 +59,24 @@ func NewFirestoreWriter(ctx context.Context) (*FirestoreWriter, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &FirestoreWriter{app: app}, nil
+	client, err := app.Firestore(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &FirestoreWriter{client: client}, nil
 }
 
 // WriteBatchTransfers writes multiple TransferDocuments to Firestore using transactions.
 // Ensures atomicity per batch - either all writes succeed or none are applied.
 func (f *FirestoreWriter) WriteBatchTransfers(ctx context.Context, transfers []*TransferDocument) error {
-	client, err := f.app.Firestore(ctx)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err := client.Close(); err != nil {
-			slog.Error("failed to close firestore client", "error", err)
-		}
-	}()
+	client := f.client
 
 	total := len(transfers)
 	for start := 0; start < total; start += firestoreBatchLimit {
 		end := min(start+firestoreBatchLimit, total)
 		batch := transfers[start:end]
 
-		err = client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		err := client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 			for _, transfer := range batch {
 				docID := GetDocumentID(transfer.Transaction.Hash, transfer.Transfer.LogIndex)
 				docRef := client.Collection(firestoreCollection).Doc(docID)

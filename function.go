@@ -36,7 +36,7 @@ func AlchemyWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	signature := r.Header.Get("x-alchemy-signature")
-	slog.Debug("raw webhook received", "signature", signature, "body", string(body))
+	slog.Debug("raw webhook received", "body", string(body))
 
 	if !verifySignature(body, signature, []byte(signingKey)) {
 		slog.Error("signature validation failed")
@@ -57,7 +57,13 @@ func AlchemyWebhook(w http.ResponseWriter, r *http.Request) {
 func verifySignature(body []byte, signature string, signingKey []byte) bool {
 	h := hmac.New(sha256.New, signingKey)
 	h.Write(body)
-	return hex.EncodeToString(h.Sum(nil)) == signature
+	expected := h.Sum(nil)
+
+	sig, err := hex.DecodeString(signature)
+	if err != nil {
+		return false
+	}
+	return hmac.Equal(expected, sig)
 }
 
 func parseWebhookEvent(body []byte) (*WebhookEvent, error) {
@@ -110,20 +116,15 @@ func handleWebhook(w http.ResponseWriter, ctx context.Context, webhook *WebhookE
 }
 
 func publishToPubSub(ctx context.Context, transfers []*TransferDocument) error {
-	publisher, err := NewPubSubPublisher(ctx)
+	publisher, err := getPubSubPublisher(ctx)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err := publisher.Close(); err != nil {
-			slog.Error("failed to close pubsub publisher", "error", err)
-		}
-	}()
 	return publisher.PublishTransfers(ctx, transfers)
 }
 
 func writeToFirestore(ctx context.Context, transfers []*TransferDocument) error {
-	writer, err := NewFirestoreWriter(ctx)
+	writer, err := getFirestoreWriter(ctx)
 	if err != nil {
 		return err
 	}
